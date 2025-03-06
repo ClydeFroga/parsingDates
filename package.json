@@ -1,0 +1,10 @@
+{
+  "scripts": {
+    "test": "npx mocha --reporter spec"
+  },
+  "dependencies": {
+    "luxon": "^3.5.0",
+    "mocha": "^5.2.0",
+    "should": "^13.2.3"
+  }
+}
