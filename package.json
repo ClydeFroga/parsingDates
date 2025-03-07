@@ -1,6 +1,7 @@
 {
   "scripts": {
-    "test": "npx mocha --reporter spec"
+    "test": "./node_modules/.bin/_mocha --reporter spec",
+    "testLocal": "npx mocha --reporter spec"
   },
   "dependencies": {
     "luxon": "^3.5.0",

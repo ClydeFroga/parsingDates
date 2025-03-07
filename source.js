@@ -1,112 +1,115 @@
 const { DateTime } = require("luxon");
 
+// Кэшированные регулярные выражения для улучшения производительности
+const TIMEZONE_REGEX = /(\+|\-)\d{2}:\d{2}$/;
+const DATE_FORMATS = {
+  DMY: {
+    regex: /(?<day>\d{2})(?:-|\/|\.)(?<month>\d{2})(?:-|\/|\.)(?<year>\d{4})/,
+    format: "yyyy-MM-dd HH:mm",
+  },
+  YMD: {
+    regex: /(?<year>\d{4})(?:-|\/|\.)(?<month>\d{2})(?:-|\/|\.)(?<day>\d{2})/,
+    format: "yyyy-MM-dd HH:mm",
+  },
+  RUSSIAN: {
+    regex: /\D?(?<day>\d{1,2})\D? (?<month>[а-яА-Я]+)\.? (?<year>\d{4})/,
+    format: "yyyy-MM-dd HH:mm",
+    locale: "ru",
+  },
+};
+const TIME_REGEX = /\d{2}:\d{2}/;
+
+// Карта русских месяцев (вынесена из функции для оптимизации)
+const RUSSIAN_MONTHS = new Map([
+  ["января", "01"],
+  ["февраля", "02"],
+  ["марта", "03"],
+  ["апреля", "04"],
+  ["мая", "05"],
+  ["июня", "06"],
+  ["июля", "07"],
+  ["августа", "08"],
+  ["сентября", "09"],
+  ["октября", "10"],
+  ["ноября", "11"],
+  ["декабря", "12"],
+  ["янв", "01"],
+  ["фев", "02"],
+  ["мар", "03"],
+  ["апр", "04"],
+  ["май", "05"],
+  ["июн", "06"],
+  ["июл", "07"],
+  ["авг", "08"],
+  ["сен", "09"],
+  ["окт", "10"],
+  ["ноя", "11"],
+  ["дек", "12"],
+]);
+
 function source_d({ src, options }) {
-  const input = src[options];
+  try {
+    const input = src[options];
+    if (!input || typeof input !== "string") {
+      return null;
+    }
 
-  // Проверка наличия временной зоны в строке
-  const hasTimeZone = /(\+|\-)\d{2}:\d{2}$/.test(input);
+    const hasTimeZone = TIMEZONE_REGEX.test(input);
 
-  // Попытка парсинга даты
-  let date = hasTimeZone
+    // Попытка прямого парсинга ISO
+    let date = parseISODate(input, hasTimeZone);
+    if (date?.isValid) {
+      return date.toISO();
+    }
+
+    // Попытка парсинга через пользовательские форматы
+    date = parseCustomFormats(input, hasTimeZone);
+    return date?.isValid ? date.toISO() : null;
+  } catch (error) {
+    console.error("Error parsing date:", error);
+    return null;
+  }
+}
+
+function parseISODate(input, hasTimeZone) {
+  const date = hasTimeZone
     ? DateTime.fromISO(input, { zone: undefined })
     : DateTime.fromISO(input, { zone: "utc" });
 
-  //Не распарсилось
   if (!date.isValid) {
-    const format = DateTime.buildFormatParser("yyyy-MM-ddZZ");
-
-    date = DateTime.fromFormatParser(input, format, {
+    return DateTime.fromFormat(input, "yyyy-MM-ddZZ", {
       zone: hasTimeZone ? undefined : "utc",
     });
   }
 
-  if (!date.isValid) {
-    date = parseCustomFormats(input, hasTimeZone);
-  }
-
-  return date.isValid ? date.toISO() : null;
+  return date;
 }
 
-/**
- * Парсинг даты с использованием пользовательских форматов
- * @param {string} input - Входная строка с датой
- * @param {boolean} hasTimeZone - Флаг наличия временной зоны
- * @returns {DateTime} - Распарсенная дата
- */
 function parseCustomFormats(input, hasTimeZone) {
-  const variants = [
-    {
-      fullDate:
-        /(?<day>\d{2})(?:-|\/|\.)(?<month>\d{2})(?:-|\/|\.)(?<year>\d{4})/,
-      time: /\d{2}:\d{2}/,
-      format: "yyyy-MM-dd HH:mm",
-    },
-    {
-      fullDate:
-        /(?<year>\d{4})(?:-|\/|\.)(?<month>\d{2})(?:-|\/|\.)(?<day>\d{2})/,
-      time: /\d{2}:\d{2}/,
-      format: "yyyy-MM-dd HH:mm",
-    },
-    {
-      fullDate: /\D?(?<day>\d{1,2})\D? (?<month>[а-яА-Я]+)\.? (?<year>\d{4})/,
-      time: /\d{2}:\d{2}/,
-      locale: "ru",
-      format: "yyyy-MM-dd HH:mm",
-      getMonthNum: (month) => russianMonth.get(month),
-    },
-  ];
+  const timeMatch = TIME_REGEX.exec(input);
+  const defaultTime = "00:00";
 
-  const russianMonth = new Map([
-    ["января", "01"],
-    ["февраля", "02"],
-    ["марта", "03"],
-    ["апреля", "04"],
-    ["мая", "05"],
-    ["июня", "06"],
-    ["июля", "07"],
-    ["августа", "08"],
-    ["сентября", "09"],
-    ["октября", "10"],
-    ["ноября", "11"],
-    ["декабря", "12"],
-    ["янв", "01"],
-    ["фев", "02"],
-    ["мар", "03"],
-    ["апр", "04"],
-    ["май", "05"],
-    ["июн", "06"],
-    ["июл", "07"],
-    ["авг", "08"],
-    ["сен", "09"],
-    ["окт", "10"],
-    ["ноя", "11"],
-    ["дек", "12"],
-  ]);
-
-  for (const variant of variants) {
-    const fullDateMatch = variant.fullDate.exec(input);
-    const timeMatch = variant.time.exec(input);
-
+  for (const [_, format] of Object.entries(DATE_FORMATS)) {
+    const fullDateMatch = format.regex.exec(input);
     if (!fullDateMatch) continue;
 
-    // Преобразование месяца для русских дат
-    if (variant.getMonthNum) {
-      fullDateMatch.groups.month = variant.getMonthNum(
-        fullDateMatch.groups.month
-      );
+    let { year, month, day } = fullDateMatch.groups;
+
+    // Обработка русских месяцев
+    if (format.locale === "ru") {
+      month = RUSSIAN_MONTHS.get(month);
+      if (!month) continue;
     }
 
-    const prettyDate = `${fullDateMatch.groups.year}-${
-      fullDateMatch.groups.month
-    }-${
-      fullDateMatch.groups.day.length === 1
-        ? "0" + fullDateMatch.groups.day
-        : fullDateMatch.groups.day
-    } ${timeMatch?.[0] ?? "00:00"}`;
+    // Нормализация дня (добавление ведущего нуля)
+    day = day.padStart(2, "0");
 
-    const parsedDate = DateTime.fromFormat(prettyDate, variant.format, {
+    const prettyDate = `${year}-${month}-${day} ${
+      timeMatch?.[0] ?? defaultTime
+    }`;
+    const parsedDate = DateTime.fromFormat(prettyDate, format.format, {
       zone: hasTimeZone ? undefined : "utc",
-      locale: variant.locale ?? "en",
+      locale: format.locale ?? "en",
     });
 
     if (parsedDate.isValid) return parsedDate;
